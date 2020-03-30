@@ -1,5 +1,5 @@
 id: net.lutris.Lutris.Runner.Wine
-sdk: org.gnome.Sdk//3.34
+sdk: org.gnome.Sdk//3.36
 runtime: net.lutris.Lutris
 build-extension: true
 appstream-compose: false
@@ -11,6 +11,9 @@ sdk-extensions:
 build-options:
   prefix: /app/runners/Wine
   prepend-path: /app/runners/Wine/bin
+  env:
+    C_INCLUDE_PATH: /app/runners/Wine/include:/app/include
+    CPLUS_INCLUDE_PATH: /app/runners/Wine/include:/app/include
   strip: true
 
 x-compat-i386-opts: &compat_i386_opts
@@ -47,10 +50,55 @@ cleanup:
   - /lib32/wine/*.def
 modules:
 
+  - name: SPIRV-Headers
+    x-multilib: false
+    buildsystem: cmake-ninja
+    sources:
+      - type: git
+        url: "https://github.com/KhronosGroup/SPIRV-Headers.git"
+        tag: 1.5.1.corrected
+
+  - name: wine-widl
+    build-options:
+      arch:
+        x86_64:
+          config-opts:
+            - --enable-win64
+    make-args:
+      - tools/widl
+    no-make-install: true
+    build-commands:
+      - install -Dm755 -t ${FLATPAK_DEST}/bin/ tools/widl/widl
+    sources: &wine_sources
+      - type: git
+        url: "https://github.com/lutris/wine.git"
+        branch: lutris-5.4
+        commit: c40d0fc08f114b70b5f7d5d111415b30598efcfe
+
+  - name: vkd3d
+    config-opts: &vkd3d_config_opts
+      - --disable-tests
+    sources: &vkd3d_sources
+      - type: git
+        url: "git://source.winehq.org/git/vkd3d.git"
+        commit: a59f1982adeca99b64d28fd89fa7118a246558c0
+
+  - name: vkd3d-32bit
+    only-arches:
+      - x86_64
+    build-options:
+      arch:
+        x86_64: *compat_i386_opts
+    config-opts: *vkd3d_config_opts
+    sources: *vkd3d_sources
+
   # Native arch build
 
   - name: wine
     build-options:
+      prepend-pkg-config-path: /app/runners/Wine/lib/pkgconfig
+      env:
+        LD_RUN_PATH: /app/runners/Wine/lib
       arch:
         x86_64:
           config-opts:
@@ -66,8 +114,8 @@ modules:
       - --without-oss
     make-install-args: &wine_common_make_install_args
       - LDCONFIG=/bin/true
-      - STRIP=/bin/true
       - UPDATE_DESKTOP_DATABASE=/bin/true
+      - INSTALL_PROGRAM_FLAGS=-s
     post-install:
       - |
         case $FLATPAK_ARCH in
@@ -78,11 +126,7 @@ modules:
             mv $FLATPAK_DEST/bin/wineserver{,32}
           ;;
         esac
-    sources: &wine_sources
-      - type: git
-        url: "https://github.com/lutris/wine.git"
-        branch: lutris-5.0
-        commit: 99849d3429259350e24f4870c69aea36b007bcd8
+    sources: *wine_sources
 
   # 32-bit compatibility build
 
@@ -90,13 +134,21 @@ modules:
     only-arches:
       - x86_64
     build-options:
+      prepend-pkg-config-path: /app/runners/Wine/lib32/pkgconfig
+      env:
+        LD_RUN_PATH: /app/runners/Wine/lib32
       arch:
         x86_64: *compat_i386_opts
+      config-opts:
+        - --bindir=${FLATPAK_DEST}/bin32
     config-opts: *wine_common_opts
     make-install-args: *wine_common_make_install_args
     post-install:
-      - mv $FLATPAK_DEST/bin/wineserver{,32}
+      - mv ${FLATPAK_DEST}/bin32/wineserver ${FLATPAK_DEST}/bin/wineserver32
+      - mv ${FLATPAK_DEST}/bin32/wine{,-preloader} ${FLATPAK_DEST}/bin/
     sources: *wine_sources
+    cleanup:
+      - /bin32
 
   # Common stuff
 
